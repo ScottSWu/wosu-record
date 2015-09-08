@@ -1,0 +1,246 @@
+<html>
+	<head>
+		<title>wosu-record</title>
+		
+		<script type="text/javascript" src="../../wosu/ext/three.min.js"></script>
+		<script type="text/javascript" src="../../wosu/ext/lzma.min.js"></script>
+		<script type="text/javascript" src="../../wosu/ext/WOsu.js"></script>
+		
+		<script type="text/javascript">
+		var fs = require("fs");
+		var path = require("path");
+		var cryptography = require("crypto");
+		var child_process = require("child_process");
+		</script>
+		
+		<script type="text/javascript" src="Util.js"></script>
+		<script type="text/javascript" src="Manager.js"></script>
+		
+		<script type="text/javascript">
+		var infobox;
+		var manager = new Manager();
+		var player;
+		window.addEventListener("load", function() {
+			infobox = document.getElementById("infobox");
+			load();
+		});
+		
+		function load() {
+			infobox.innerHTML = "Searching for the osu! installation...";
+			async(function() {
+				if (manager.loadRoot()) {
+					infobox.innerHTML = "Loading songs and skins...";
+					resync(manager, [ manager.loadSongs, manager.loadSkins ], function() {
+						infobox.innerHTML = "Done!";
+						setTimeout(start, 1000);
+					});
+				}
+				else {
+					infobox.innerHTML = "Unable to find osu!. TODO Use custom location.";
+				}
+			});
+		}
+		
+		function start() {
+			infobox.innerHTML = "Drop a replay here!";
+			infobox.addEventListener("dragover", function(e) {
+				e.preventDefault();
+				return false;
+			});
+			infobox.addEventListener("dragenter", function(e) {
+				e.preventDefault();
+				return false;
+			});
+			infobox.addEventListener("drop", function(e) {
+				e.preventDefault();
+				
+				infobox.innerHTML = "Reading...";
+				var files = e.dataTransfer.files;
+				var reader = new FileReader();
+				reader.onloadend = function (e) {
+					var replayData = new Uint8Array(e.target.result);
+					loadPlayer(replayData);
+				};
+				reader.readAsArrayBuffer(files[0]);
+				
+				return false;
+			});
+		}
+		
+		function getFolder(f) {
+			return f.substring(0, f.lastIndexOf("\\"));
+		}
+		
+		function loadPlayer(replayData) {
+			player = new WOsu.LocalThreePlayer({
+				// TODO Custom properties
+				width: 1280,
+				height: 720,
+				
+				preserveDrawingBuffer: true,
+				
+				completionCallback: function() { record(); },
+				progressCallback: function(e, v) { console.log(e + " : " + v); },
+				errorCallback: function(e) { console.log(e); }
+			});
+			var replay = WOsu.ReplayLoader.loadRaw(replayData,
+			function() {
+				if (manager.hashToMap.has(replay.bhash)) {
+					var beatmapfile = manager.hashToMap.get(replay.bhash);
+					var beatmap = loadBeatmap(beatmapfile);
+					// TODO Select skin
+					var skin = loadSkin("C:\\Program Files (x86)\\osu!\\Skins\\_");
+					
+					player.load({
+		                replay: replay,
+						beatmap: beatmap,
+		                skin: skin,
+						song: getFolder(beatmapfile),
+						
+						layers: {
+							storyboard: true,
+							gameplay: true,
+							replay: true,
+							ui: true,
+							stat: true
+						}
+		            });
+					
+					document.getElementById("gameWindow").style.display = "block";
+	                document.getElementById("gameWindow").appendChild(player.elements.three);
+	                document.getElementById("gameWindow").appendChild(player.elements.debug);
+				}
+			},
+			function() { });
+		}
+		
+		function loadBeatmap(beatmapfile) {
+			var beatmapdata = fs.readFileSync(beatmapfile, "utf8");
+			return WOsu.BeatmapLoader.load(beatmapdata);
+		}
+		
+		function loadSkin(folder) {
+			var skin = new WOsu.Skin(folder);
+			
+			// Grab an array of texture names
+			var textures = [];
+			for (var i in WOsu.Skin.textureList) {
+				textures.push(i);
+			}
+			
+			textures.forEach(function(t) {
+				var data = fs.readFileSync(folder + "\\" + WOsu.Skin.textureList[t]);
+				var dataurl = data.toString("base64");
+				
+				var image = document.createElement("img");
+				image.src = "data:image/png;base64," + dataurl;
+				
+				var texture = new THREE.Texture(image);
+				texture.needsUpdate = true;
+		        texture.minFilter = THREE.LinearFilter;
+		        texture.magFilter = THREE.LinearFilter;
+				
+				skin.textures[t] = texture;
+			});
+			
+			return skin;
+		}
+		
+		function record() {
+			var recorder = child_process.spawn("ext/ffmpeg.exe", [
+				"-y", "-f", "image2pipe",
+				"-vcodec", "png", "-r", "60",
+				"-i", "-", "-vcodec", "h264",
+				"-r", "60", "C:\\tmp\\output.mp4"
+			]);
+			
+			recorder.stdout.on("data", function(e) {
+				var output = "";
+				for (var i = 0; i < e.length; i++) {
+					output += String.fromCharCode(e[i]);
+				};
+				console.log(output);
+			});
+			recorder.stderr.on("data", function(e) {
+				var output = "";
+				for (var i = 0; i < e.length; i++) {
+					output += String.fromCharCode(e[i]);
+				};
+				console.log(output);
+			});
+			
+			var mechanics = player.game.mechanics;
+			var count = 0;
+			var time = mechanics.startTime;
+			
+			var asyncRecord = function() {
+				if (time <= mechanics.endTime + 1000) {
+					// Frame the player
+					player.frame(time);
+					count++;
+					time += 1000.0 / 60.0;
+					
+					//console.log("Frame " + count);
+					if (count % (60 * 10) == 0) {
+						console.log("Frame " + count);
+					}
+					
+					// Write frame to stdin
+					var url = player.elements.three.toDataURL();
+					url = url.substring(url.indexOf("base64") + 7);
+					recorder.stdin.write(atob(url), "binary");
+					
+					setTimeout(asyncRecord, 10);
+				}
+				else {
+					recorder.stdin.end();
+				}
+			};
+			
+			asyncRecord();
+		}
+		</script>
+		
+		<style type="text/css">
+		#stupid-vertical-align {
+			position: absolute;
+			top: 25%;
+			left: 30%;
+			
+			width: 40%;
+			height: 40%;
+			
+			display: table;
+			text-align: center;
+			
+			border-radius: 10px;
+			border: 5px dotted grey;
+		}
+		
+		#infobox {
+			display: table-cell;
+			vertical-align: middle;
+			
+			font-size: 2em;
+			font-family: sans-serif;
+		}
+		
+		#gameWindow {
+			position: absolute;
+			display: none;
+			
+			left: 0px;
+			top: 0px;
+			
+			width: 1280px;
+			height: 720px;
+		}
+		</style>
+	</head>
+	<body>
+		<div id="stupid-vertical-align">
+			<div id="infobox"></div>
+		</div>
+		<div id="gameWindow"></div>
+	</body>
+</html>
