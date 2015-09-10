@@ -2,9 +2,9 @@
 	<head>
 		<title>wosu-record</title>
 		
-		<script type="text/javascript" src="../../wosu/ext/three.min.js"></script>
-		<script type="text/javascript" src="../../wosu/ext/lzma.min.js"></script>
-		<script type="text/javascript" src="../../wosu/ext/WOsu.js"></script>
+		<script type="text/javascript" src="ext/three.min.js"></script>
+		<script type="text/javascript" src="ext/lzma.min.js"></script>
+		<script type="text/javascript" src="ext/WOsu.js"></script>
 		
 		<script type="text/javascript">
 		var fs = require("fs");
@@ -89,7 +89,7 @@
 					var beatmapfile = manager.hashToMap.get(replay.bhash);
 					var beatmap = loadBeatmap(beatmapfile);
 					// TODO Select skin
-					var skin = loadSkin("C:\\Program Files (x86)\\osu!\\Skins\\_");
+					var skin = loadSkin("Skin");
 					
 					player.load({
 		                replay: replay,
@@ -147,11 +147,20 @@
 		}
 		
 		function record() {
+			// Make temporary directory for now
+			try {
+				fs.mkdirSync("tmp");
+			}
+			catch (e) {
+				
+			}
+			
+			var outputFile = "tmp\\output-" + Date.now() + "-video.mp4";
 			var recorder = child_process.spawn("ext/ffmpeg.exe", [
 				"-y", "-f", "image2pipe",
 				"-vcodec", "png", "-r", "60",
 				"-i", "-", "-vcodec", "h264",
-				"-r", "60", "C:\\tmp\\output.mp4"
+				"-r", "60", outputFile
 			]);
 			
 			recorder.stdout.on("data", function(e) {
@@ -180,7 +189,6 @@
 					count++;
 					time += 1000.0 / 60.0;
 					
-					//console.log("Frame " + count);
 					if (count % (60 * 10) == 0) {
 						console.log("Frame " + count);
 					}
@@ -194,6 +202,29 @@
 				}
 				else {
 					recorder.stdin.end();
+					
+					recorder.on("close", function() {
+						// Mix audio into video
+						var finalFile = "tmp\\output-" + Date.now() + "-final.mp4";
+						
+						var audioOffset = (player.beatmap.AudioLeadIn / 1000);
+						var audioOffsetString = audioOffset.toFixed(3);
+						if (audioOffest < 10) {
+							audioOffsetString = "0" + audioOffsetString;
+						}
+						var mixer = child_process.spawn("ext/ffmpeg.exe", [
+							"-y", "-i", outputFile,
+							"-itsoffset", "00:00:" + audioOffsetString,
+							"-i", audioFile,
+							"-vcodec", "copy",
+							"-acodec", "libmp3lame",
+							"-shortest", finalFile
+						]);
+						
+						mixer.on("close", function() {
+							console.log("Done");
+						});
+					});
 				}
 			};
 			

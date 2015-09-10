@@ -47,7 +47,7 @@ Manager.prototype.loadSongs = function(finish) {
     fs.stat("songCache", function(err, cache) {
         if (!err && cache.isFile()) { // Load from cache
             var cacheData = fs.readFileSync("songCache", "utf8");
-            cacheData.split(",").forEach(function(line) {
+            cacheData.split(/[\n\r]/).forEach(function(line) {
                 var parts = line.trim().split("::");
                 instance.mapToHash.set(parts[0], parts[1]);
                 instance.hashToMap.set(parts[1], parts[0]);
